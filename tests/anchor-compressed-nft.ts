@@ -33,7 +33,7 @@ describe("anchor-compressed-nft", () => {
   const wallet = provider.wallet as anchor.Wallet
   const program = anchor.workspace
     .AnchorCompressedNft as Program<AnchorCompressedNft>
-
+console.log("programid",program.programId)
   // const connection = program.provider.connection
   const connection = new Connection(clusterApiUrl("devnet"), "confirmed")
 
@@ -128,9 +128,10 @@ describe("anchor-compressed-nft", () => {
         bubblegumProgram: BUBBLEGUM_PROGRAM_ID,
         compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
       })
-      .rpc({ commitment: "confirmed" })
+      .rpc({ skipPreflight:true })
     console.log(`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`)
 
+    console.log("before merkle tree ")
     // fetch tree account
     const treeAccount = await ConcurrentMerkleTreeAccount.fromAccountAddress(
       connection,
