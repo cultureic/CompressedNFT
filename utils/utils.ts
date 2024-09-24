@@ -75,7 +75,8 @@ export async function extractAssetId(
 }
 
 export async function heliusApi(method, params) {
-  const response = await fetch(process.env.RPC_URL, {
+  console.log("in helius API",)
+  const response = await fetch("https://devnet.helius-rpc.com/?api-key=807fd665-87d1-44f8-8e33-b22c9d645604", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -86,5 +87,6 @@ export async function heliusApi(method, params) {
     }),
   })
   const { result } = await response.json()
+  console.log("result after helius api",response)
   return result
 }
