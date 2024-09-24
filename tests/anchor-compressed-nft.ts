@@ -22,12 +22,14 @@ import {
   Metaplex,
   keypairIdentity,
   CreateNftOutput,
+  InvalidJsonStringError,
 } from "@metaplex-foundation/js"
 import { assert } from "chai"
 import { PROGRAM_ID as TOKEN_METADATA_PROGRAM_ID } from "@metaplex-foundation/mpl-token-metadata"
 import { extractAssetId, heliusApi } from "../utils/utils"
 
 import { readFileSync } from 'fs';
+import { publicKey } from "@project-serum/anchor/dist/cjs/utils"
 
 const secretKey = Uint8Array.from(JSON.parse(readFileSync('././tester.json', 'utf8')));
 const Testerkeypair = Keypair.fromSecretKey(secretKey);
@@ -46,6 +48,7 @@ describe("anchor-compressed-nft", () => {
 
   // keypair for tree
   const merkleTree = Keypair.generate()
+  const list = Keypair.generate()
 
   // tree authority
   const [treeAuthority] = PublicKey.findProgramAddressSync(
@@ -154,47 +157,7 @@ describe("anchor-compressed-nft", () => {
     assert.strictEqual(treeAccount.getMaxDepth(), maxDepthSizePair.maxDepth)
     assert.isTrue(treeAccount.getAuthority().equals(treeAuthority))
   })
-  // #[derive(Accounts)]
-  // pub struct MintIfCreatorNFT<'info>{
-  //     #[account(mut)]
-  //     pub leaf_owner:Signer<'info>,
-  //     #[account(mut)]
-  //     pub pda: UncheckedAccount<'info>,
-  //     /// CHECK:
-  //     #[account(
-  //         mut,
-  //         seeds = [merkle_tree.key().as_ref()],
-  //         bump,
-  //         seeds::program = bubblegum_program.key()
-  //     )]
-  //     pub tree_authority: UncheckedAccount<'info>,
 
-  //     /// CHECK:
-  //     #[account(mut)]
-  //     pub merkle_tree: UncheckedAccount<'info>,
-
-  //     /// CHECK:
-  //     #[account(
-  //         seeds = ["collection_cpi".as_bytes()],
-  //         seeds::program = bubblegum_program.key(),
-  //         bump,
-  //     )]
-  //     pub bubblegum_signer: UncheckedAccount<'info>,
-  //     pub log_wrapper: UncheckedAccount<'info>,
-  //     pub compression_program: UncheckedAccount<'info>,
-  //     pub bubblegum_program: UncheckedAccount<'info>,
-  //     pub token_metadata_program: Program<'info, Metadata>,
-  //     pub system_program: Program<'info, System>,
-  //     pub collection_mint: Account<'info, Mint>,
-  //     #[account(mut)]
-  //     pub collection_metadata: Account<'info, MetadataAccount>,
-  //     /// CHECK:
-  //     pub edition_account: UncheckedAccount<'info>,
-  //     pub collection_if_metadata: Account<'info, MetadataAccount>,
-  //     pub collection_if_mint: Account<'info, Mint>,
-  //     pub creator:UncheckedAccount<'info>
-
-  // }
   // it("Mint Compressed NFT to Different Account for failing Test ", async () => {
   //   // mint compressed nft via CPI
   //   const txSignature = await program.methods
@@ -291,10 +254,17 @@ describe("anchor-compressed-nft", () => {
 
   // })
 
-  it("Mint Compressed NFT", async () => {
+  it("Mint Compressed NFT if onList before adding", async () => {
+
+    const initTX = await program.methods.initializeList().accounts({
+      payer:wallet.payer.publicKey,
+      list:list.publicKey,
+    }).signers([wallet.payer,list]).rpc({commitment:"confirmed", skipPreflight: true});
+    console.log(`https://explorer.solana.com/tx/${initTX}?cluster=devnet`)
+
+
     // mint compressed nft via CPI
-    const txSignature = await program.methods
-      .mintCompressedNft()
+    const txSignature = await program.methods.mintCompressedNftIfOnlist()
       .accounts({
         pda: pda,
         merkleTree: merkleTree.publicKey,
@@ -308,6 +278,7 @@ describe("anchor-compressed-nft", () => {
         collectionMint: collectionNft.mintAddress,
         collectionMetadata: collectionNft.metadataAddress,
         editionAccount: collectionNft.masterEditionAddress,
+        list:list.publicKey
       })
       .rpc({ commitment: "confirmed" })
     console.log(`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`)
@@ -319,14 +290,58 @@ describe("anchor-compressed-nft", () => {
       program.programId
     )
   })
+
+
+  it("Add to onchain list",async ()=>{
+
+    const txSignature = await program.methods.addOnChainList().accounts({
+      list:list.publicKey
+    }).rpc({commitment:"confirmed", skipPreflight: true})
+
+    console.log(`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`)
+  })
+
+
+
+  it("Mint Compressed NFT if onList", async () => {
+    // mint compressed nft via CPI
+    const txSignature = await program.methods.mintCompressedNftIfOnlist()
+      .accounts({
+        pda: pda,
+        merkleTree: merkleTree.publicKey,
+        treeAuthority: treeAuthority,
+        logWrapper: SPL_NOOP_PROGRAM_ID,
+        bubblegumSigner: bubblegumSigner,
+        bubblegumProgram: BUBBLEGUM_PROGRAM_ID,
+        compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
+        tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+
+        collectionMint: collectionNft.mintAddress,
+        collectionMetadata: collectionNft.metadataAddress,
+        editionAccount: collectionNft.masterEditionAddress,
+        list:list.publicKey
+      })
+      .rpc({ commitment: "confirmed" })
+    console.log(`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`)
+
+    assetId = await extractAssetId(
+      connection,
+      txSignature,
+      merkleTree.publicKey,
+      program.programId
+    )
+  })
+
+ 
   it("Mint verify creator", async () => {
+    setTimeout(()=>{},500000)
     console.log("before helius",assetId)
     const [assetData, assetProofData] = await Promise.all([
       heliusApi("getAsset", { id: assetId.toBase58() }),
       heliusApi("getAssetProof", { id: assetId.toBase58() }),
     ])
     console.log("after helius")
-    console.log("helius data", assetData)
+    console.log("helius data", assetData,assetProofData)
     const { compression, ownership } = assetData
     const { proof, root } = assetProofData
     console.log("proof",proof)
@@ -361,15 +376,12 @@ describe("anchor-compressed-nft", () => {
       Array.from(new PublicKey(compression.data_hash.trim()).toBytes()),
     ).accounts({
       payer: wallet.payer.publicKey,
-      pda: pda,
       treeAuthority: treeAuthorityFromAsset,
       merkleTree: treePublicKey,
       bubblegumSigner: bubblegumSigner,
       logWrapper: SPL_NOOP_PROGRAM_ID,
       compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
       tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
-      collectionMint: collectionNft.mintAddress,
-      collectionMetadata: collectionNft.metadataAddress,
       editionAccount: collectionNft.masterEditionAddress,
       creator: pda,
       collectionIfMint: collectionNft.mintAddress,
@@ -385,146 +397,7 @@ describe("anchor-compressed-nft", () => {
 
   })
 
-  // it("Transfer Cnft", async () => {
-  //   const [assetData, assetProofData] = await Promise.all([
-  //     heliusApi("getAsset", { id: assetId.toBase58() }),
-  //     heliusApi("getAssetProof", { id: assetId.toBase58() }),
-  //   ])
 
-  //   const { compression, ownership } = assetData
-  //   const { proof, root } = assetProofData
+  
 
-  //   const treePublicKey = new PublicKey(compression.tree)
-  //   const ownerPublicKey = new PublicKey(ownership.owner)
-  //   const delegatePublicKey = ownership.delegate
-  //     ? new PublicKey(ownership.delegate)
-  //     : ownerPublicKey
-
-  //   const treeAccount = await ConcurrentMerkleTreeAccount.fromAccountAddress(
-  //     connection,
-  //     treePublicKey
-  //   )
-  //   const treeAuthority = treeAccount.getAuthority()
-  //   const canopyDepth = treeAccount.getCanopyDepth() || 0
-
-  //   const proofPath: AccountMeta[] = proof
-  //     .map((node: string) => ({
-  //       pubkey: new PublicKey(node),
-  //       isSigner: false,
-  //       isWritable: false,
-  //     }))
-  //     .slice(0, proof.length - canopyDepth)
-
-  //   const receiver = Keypair.generate()
-  //   const newLeafOwner = receiver.publicKey
-
-  //   const txSignature = await program.methods
-  //     .transferCompressedNft(
-  //       Array.from(new PublicKey(root.trim()).toBytes()),
-  //       Array.from(new PublicKey(compression.data_hash.trim()).toBytes()),
-  //       Array.from(new PublicKey(compression.creator_hash.trim()).toBytes()),
-  //       new anchor.BN(compression.leaf_id),
-  //       compression.leaf_id
-  //     )
-  //     .accounts({
-  //       leafOwner: ownerPublicKey,
-  //       leafDelegate: delegatePublicKey,
-  //       newLeafOwner: newLeafOwner,
-  //       merkleTree: treePublicKey,
-  //       treeAuthority: treeAuthority,
-  //       logWrapper: SPL_NOOP_PROGRAM_ID,
-  //       bubblegumProgram: BUBBLEGUM_PROGRAM_ID,
-  //       compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-  //     })
-  //     .remainingAccounts(proofPath)
-  //     .rpc()
-
-  //   console.log(`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`)
-  // })
-
-  // it("Mint Another Compressed NFT", async () => {
-  //   // mint compressed nft via CPI
-  //   const txSignature = await program.methods
-  //     .mintCompressedNft()
-  //     .accounts({
-  //       pda: pda,
-  //       merkleTree: merkleTree.publicKey,
-  //       treeAuthority: treeAuthority,
-  //       logWrapper: SPL_NOOP_PROGRAM_ID,
-  //       bubblegumSigner: bubblegumSigner,
-  //       bubblegumProgram: BUBBLEGUM_PROGRAM_ID,
-  //       compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-  //       tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
-
-  //       collectionMint: collectionNft.mintAddress,
-  //       collectionMetadata: collectionNft.metadataAddress,
-  //       editionAccount: collectionNft.masterEditionAddress,
-  //     })
-  //     .rpc({ commitment: "confirmed" })
-  //   console.log(`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`)
-
-  //   assetId2 = await extractAssetId(
-  //     connection,
-  //     txSignature,
-  //     merkleTree.publicKey,
-  //     program.programId
-  //   )
-  // })
-
-  // it("Burn Cnft", async () => {
-  //   console.log("before helius")
-  //   const [assetData, assetProofData] = await Promise.all([
-  //     heliusApi("getAsset", { id: assetId.toBase58() }),
-  //     heliusApi("getAssetProof", { id: assetId.toBase58() }),
-  //   ])
-  //   console.log("after helius")
-  //   console.log("helius data", assetData)
-  //   const { compression, ownership } = assetData
-  //   const { proof, root } = assetProofData
-
-  //   const treePublicKey = new PublicKey(compression.tree)
-  //   const ownerPublicKey = new PublicKey(ownership.owner)
-  //   const delegatePublicKey = ownership.delegate
-  //     ? new PublicKey(ownership.delegate)
-  //     : ownerPublicKey
-
-  //   console.log("owner publickey", ownerPublicKey)
-  //   console.log("ownership delegate", delegatePublicKey)
-  //   const treeAccount = await ConcurrentMerkleTreeAccount.fromAccountAddress(
-  //     connection,
-  //     treePublicKey
-  //   )
-  //   const treeAuthority = treeAccount.getAuthority()
-  //   const canopyDepth = treeAccount.getCanopyDepth() || 0
-
-  //   const proofPath: AccountMeta[] = proof
-  //     .map((node: string) => ({
-  //       pubkey: new PublicKey(node),
-  //       isSigner: false,
-  //       isWritable: false,
-  //     }))
-  //     .slice(0, proof.length - canopyDepth)
-
-  //   const txSignature = await program.methods
-  //     .burnCompressedNft(
-  //       Array.from(new PublicKey(root.trim()).toBytes()),
-  //       Array.from(new PublicKey(compression.data_hash.trim()).toBytes()),
-  //       Array.from(new PublicKey(compression.creator_hash.trim()).toBytes()),
-  //       new anchor.BN(compression.leaf_id),
-  //       compression.leaf_id
-  //     )
-  //     .accounts({
-  //       leafOwner: ownerPublicKey,
-  //       leafDelegate: delegatePublicKey,
-  //       merkleTree: treePublicKey,
-  //       treeAuthority: treeAuthority,
-  //       logWrapper: SPL_NOOP_PROGRAM_ID,
-  //       bubblegumProgram: BUBBLEGUM_PROGRAM_ID,
-  //       compressionProgram: SPL_ACCOUNT_COMPRESSION_PROGRAM_ID,
-  //     })
-  //     .remainingAccounts(proofPath)
-  //     .rpc()
-
-  //   console.log(`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`)
-  // })
 })
